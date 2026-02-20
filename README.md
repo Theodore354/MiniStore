@@ -20,6 +20,20 @@ A production-ready, offline-first e-commerce mobile application built with Flutt
 
 ---
 
+## Screenshots
+
+| Home Page | Product Detail | Cart Page |
+|-----------|----------------|-----------|
+| ![Home Page with product grid](screenshots/home.png) | ![Product detail view](screenshots/product_detail.png) | ![Shopping cart](screenshots/cart.png) |
+| *Product feed with pagination & search* | *Product details with add-to-cart* | *Cart with quantity management* |
+
+| Offline Mode | Category Filter | Empty State |
+|--------------|-----------------|-------------|
+| ![Offline indicator](screenshots/offline.png) | ![Category filtering](screenshots/categories.png) | ![Empty state](screenshots/empty.png) |
+| *Offline banner when no connection* | *Filter by product category* | *Graceful empty state* |
+
+---
+
 ## Architecture
 
 ### Layered Clean Architecture
