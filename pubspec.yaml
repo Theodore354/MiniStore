@@ -1,4 +1,4 @@
-name: fake_store_app
+name: mini_store
 description: "A mini e-commerce app built with Fake Store API – offline-first, paginated, with caching."
 publish_to: 'none'
 
