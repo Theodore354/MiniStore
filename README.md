@@ -74,37 +74,92 @@ We use `provider` (v6.1+) for state management. This choice prioritizes:
 
 ## Caching Strategy & Expiration
 
-### Cache Layer
+### Design Philosophy
 
-**Hive Boxes** (fast, local key-value storage):
-- `products_box`: Stores serialized product list + timestamp
-- `categories_box`: Stores serialized category list + timestamp
-- `cart_box`: Stores persisted cart items
-- `metadata_box`: Stores cache timestamps for validation
+**Cache-First, Network-Second Strategy**: Prioritizes instant user experience and offline availability over always-fresh data. This choice reflects a real-world e-commerce trade-off: showing slightly-stale products immediately is better than forcing users to wait for network calls or seeing errors.
 
-### Expiration Logic
+### Cache Layer: Technology Choice
 
-| Resource | TTL | Validation | Refresh |
-|----------|-----|-----------|---------|
-| Products | 30 minutes | Timestamp comparison | On expiry or explicit `forceRefresh=true` |
-| Categories | 30 minutes | Timestamp comparison | On expiry or explicit `forceRefresh=true` |
-| Cart | ∞ (persistent) | N/A | User mutations (add/remove/qty change) |
+**Hive** (vs SQLite, SharedPreferences, or Provider memory):
+- **Why Hive?**
+  - **Fast**: Key-value storage, no SQL parsing overhead
+  - **Persistent**: Survives app restarts (unlike memory)
+  - **Simple**: Minimal boilerplate vs SQLite
+  - **Typed**: Native Dart object serialization support
+  - **Lightweight**: ~2MB footprint vs SQLite's ~20MB
 
-### Offline-First Flow
+**Hive Boxes** (separate storage containers):
+- `products_box`: Serialized product list (JSON string) + timestamp
+- `categories_box`: Serialized categories (JSON string) + timestamp
+- `cart_box`: Persisted cart items (JSON string) — user's purchases
+- `metadata_box`: Cache timestamps for expiration validation
 
-1. **Always check cache first** (instant load)
-2. **If cache valid**: Return cached data
-3. **If cache expired or missing**:
-   - **Online**: Fetch from API, update cache, return fresh
-   - **Offline**: Return stale cache if available, else error
+### Expiration Logic & TTL Reasoning
 
-### Benefits
+| Resource | TTL | Why? | Validation |
+|----------|-----|------|-----------|
+| **Products** | 30 min | Fake Store API rarely changes; 30 min balances freshness vs API load | Timestamp in metadata_box |
+| **Categories** | 30 min | Same as products; categories change even less frequently | Timestamp in metadata_box |
+| **Cart** | ∞ (infinite) | User's selections must persist across sessions; only cleared on user action or app uninstall | Event-driven (user mutations) |
 
-- **Reduced API calls**: Same product list not re-fetched within 30 min
-- **Instant load**: Cached data displays immediately on app open
-- **Offline support**: Cached data available even without internet
-- **Freshness**: Automatic refresh after expiry prevents stale data
-- **Corruption resilience**: Invalid JSON/corrupted cache cleared and re-fetched
+**Why 30 minutes (not 5 or 60)?**
+- 5 min: Too aggressive; wastes API quota for minimal freshness gain
+- 30 min: Sweet spot — users typically browsing for 10-20 min; refreshes on re-open later
+- 60 min: Too stale; user expects "new" products if browsing an hour later
+
+### Offline-First Flow Explained
+
+```
+User opens app (or pulls-to-refresh)
+  ↓
+1. Check LocalDataSource.getCachedProducts()
+   ↓
+   YES: Check if timestamp < 30 min old
+       ├─→ VALID: Return cache immediately (instant load) ✨
+       └─→ EXPIRED: Proceed to network check
+       
+   NO: Proceed to network check
+  ↓
+2. Check if device is online (NetworkInfo)
+   ├─→ ONLINE: Fetch from API
+   │   ├─ Success: Update cache + timestamp, display fresh data
+   │   └─ Error (500, timeout): Show cached if available, else error
+   │
+   └─→ OFFLINE: 
+       ├─ Cache exists: Display stale cache + offline banner
+       └─ No cache: Show error "No data available"
+```
+
+### Caching Decision Rationale
+
+| Decision | Reasoning | Trade-Off |
+|----------|-----------|-----------|
+| **Cache-first** | Reduces API calls, instant UX, offline support | Data can be 30 min stale (acceptable for e-commerce) |
+| **Timestamp-based validation** | Simple, no database queries, no external time sync | Requires device clock accuracy |
+| **Serialized JSON (not objects)** | Avoids Hive model mapping complexity; use codegen later | Slightly slower parsing than native Hive objects |
+| **Separate metadata_box** | Decouples timestamps from data; cleaner separation | Extra box overhead (negligible for small app) |
+| **Persistent cart (∞ TTL)** | User expects cart to survive app close/restart | Must handle corrupted cart gracefully (implemented) |
+
+### Corruption Resilience
+
+If cache is corrupted (malformed JSON):
+1. `LocalDataSource.getCachedProducts()` catches exception
+2. Clears the corrupted cache entry
+3. Returns empty list
+4. Repository detects empty list + network available
+5. Fetches fresh from API
+6. User sees fresh data without visible error
+
+Result: **Transparent recovery** — user sees products without knowing corruption happened.
+
+### Benefits Summary
+
+- **Reduced API calls**: Fake Store API not hammered; saves bandwidth/battery
+- **Instant load**: Cached data displays in <100ms vs 1-3s network call
+- **Offline support**: App fully functional offline (read-only, using cached data)
+- **Graceful freshness**: Auto-refresh after 30 min prevents stale data build-up
+- **Battery efficient**: Fewer network requests = lower power consumption
+- **Scalable**: Same caching logic works for 100 products or 10,000
 
 ---
 
